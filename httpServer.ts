@@ -213,6 +213,77 @@ function getMessage(buf: DynBuf): null | Buffer {
     return msg;
 }
 
+function parseHTTPReq(data: Buffer): HTTPReq {
+    const lines = splitLines(data);
+    const [method, uri, version] = parseRequestLine(lines[0]);
+    const headers: Buffer[] = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+        const h: Buffer = lines[i];
+        if (!checkHeaderLine(h)) throw new HTTPError(400, 'bad field');
+        headers.push(h);
+    }
+    
+    console.assert(lines[lines.length - 1].length === 0);
+    return { method: method, uri: uri, version: version, headers: headers, };
+}
+
+function splitLines(data: Buffer): Buffer[] {
+    let lines = Buffer[0];
+    let numOfLines = 0; 
+    const delimiter = Buffer.from('\r\n');
+    let start = 0
+    let index = data.indexOf(delimiter, start);
+    while (index !== -1) {
+        if (numOfLines + 1 > lines.length) {
+            let tmp = Buffer[lines.length * 2 + 1];
+            tmp = [...lines];
+            lines = tmp;
+        }
+        lines.push(data.subarray(start, index));
+        start = index + delimiter.length;
+        numOfLines++;
+        index = data.indexOf(delimiter, start);
+    }
+
+    let tmp = Buffer[numOfLines + 1];
+    tmp = [...(lines.subarray(0,numOfLines))];
+    lines = tmp;
+    
+    lines.push(data.subarray(start));
+
+    return lines;
+}
+
+function parseRequestLine(data: Buffer): [string, Buffer, string] {
+    const delimiter = Buffer.from(' ');
+    let start = 0;
+
+    let index = data.indexOf(delimiter, start);
+    const method = data.subarray(start, index).toString();
+    start = index + 1;
+    
+    index = data.indexOf(delimiter, start);
+    const uri = data.subarray(start, index);
+    start = index + 1
+
+    const version = data.subarray(start).toString();
+
+    return [method, uri, version];
+}
+
+function checkHeaderLine(data: Buffer): boolean {
+    const colon = data.indexOf(':');
+    if (colon === -1) return false;
+    const firstOWS = data.indexOf(' ');
+    if (firstOWS === -1) return true;
+    if (firstOWS < colon) return false;
+    const secondOWS = data.indexOf(' ', firstOWS + 1);
+    if (secondOWS === -1) return true;
+    if (firstOWS + 1 === secondOWS) return false;
+    return true;
+}
+
 async function serveClient(conn: TCPConn): Promise<void> {
     const buf: DynBuf = {data: Buffer.alloc(0), length: 0};
     while (true) {
@@ -220,7 +291,7 @@ async function serveClient(conn: TCPConn): Promise<void> {
         const msg: null | HTTPReq = getMessage(buf);
         if (!msg) {
             const data = await soRead(conn);
-            pushBuf(data);
+            pushBuf(buf, data);
         
             if (data.length === 0 && buf.length === 0) {
                 return;
