@@ -288,7 +288,7 @@ function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
     let payloadLength = -1;
     const contentLength: null | Buffer = fieldGet(req.headers, 'Content-Length');
     if (contentLength) {
-        payloadLength = parseDec(contentLength.toString('latin1'));
+        payloadLength = Number(contentLength.toString('latin1'));
         if (isNaN(payloadLength)) throw new HTTPError(400, 'bad Content-Length.');
     }
     const bodyAllowed: boolean = !(req.method === 'GET' || req.method === 'HEAD');
@@ -304,9 +304,10 @@ function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
         return readerFromConnLength(conn, buf, payloadLength);
     } else if (isChunked) {
         //"Transfer-Encoding" field is a header
-    } else {
-        //read the rest of the connection
     }
+
+    //read the rest of the connection
+    return {length: 0, read: async (): Promise<Buffer> => {return Buffer.from('')}};
 }
 
 function fieldGet(headers: Buffer[], field: string): null | Buffer {
@@ -369,6 +370,29 @@ function defaultReader(data: Buffer): BodyReader {
     };
 }
 
+async function writeHTTPResp(conn: TCPConn, resp: HTTPRes, version: string): Promise<void> {
+    if (resp.body.length < 0) {
+        //chunked encoding    
+    }
+    
+    console.assert(!fieldGet(resp.headers, 'Content-Length'));
+    resp.headers.push(Buffer.from(`Content-Length: ${resp.body.length}`));
+
+    //write header
+    await soWrite(conn, encodeHTTPResp(resp, version));
+
+    //write body
+    while (true) {
+        const data = await resp.body.read();
+        if (data.length === 0) break;
+        await soWrite(conn, data);
+    }
+}
+
+function encodeHTTPResp(resp: HTTPRes, version: string): Buffer {
+    return Buffer.from(`${version} ${resp.code} `);
+}
+
 async function serveClient(conn: TCPConn): Promise<void> {
     const buf: DynBuf = {data: Buffer.alloc(0), length: 0};
     while (true) {
@@ -389,9 +413,9 @@ async function serveClient(conn: TCPConn): Promise<void> {
             continue;
         }
 
-        const reqBody: BodyReader = readerFromReq(conn, buf, msg);
+        const reqBody: BodyReader = readFromReq(conn, buf, msg);
         const res: HTTPRes = await handleReq(msg, reqBody);
-        await writeHTTPRes(conn, res);
+        await writeHTTPResp(conn, res, msg.version);
         
         if (msg.version === "1.0") return;
 
