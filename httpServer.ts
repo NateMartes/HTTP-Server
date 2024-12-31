@@ -34,6 +34,16 @@ type TCPConn = {
     };
 };
 
+class HTTPError extends Error {
+    public code: number;
+    
+    constructor(code: number, message: string) {
+        super(message);
+        this.name = "HTTPError"
+        this.code = code;
+    }
+}
+
 /*
  * soInit setups a TCPConn for a connection socket, setting up callback events aswell
  */
@@ -347,7 +357,7 @@ async function handleReq(req: HTTPReq, body: BodyReader): Promise<HTTPRes> {
             resp = body;
             break;
         default:
-            resp = defaultReader(Buffer.from('Hello World!\n'));
+            resp = readerFromMemory(Buffer.from('Hello World!\n'));
             break;
     }
     
@@ -358,7 +368,7 @@ async function handleReq(req: HTTPReq, body: BodyReader): Promise<HTTPRes> {
     };
 }
 
-function defaultReader(data: Buffer): BodyReader {
+function readerFromMemory(data: Buffer): BodyReader {
     let done = false;
     return {
         length: data.length,
@@ -429,7 +439,7 @@ async function serveClient(conn: TCPConn): Promise<void> {
 async function newConn(socket: net.Socket): Promise<void> {
     console.log(`new connection ${socket.remoteAddress}, ${socket.remotePort}`);
     try {
-        await serveClient(socket);
+        await serveClient(soInit(socket));
     } catch (exc) {
         console.error(`exception: ${exc}`);
         if (exc instanceof HTTPError) {
@@ -439,7 +449,7 @@ async function newConn(socket: net.Socket): Promise<void> {
                 body: readerFromMemory(Buffer.from(exc.message + '\n')),
             };
             try {
-                await wrtieHTTPResp(conn, resp);
+                await writeHTTPResp(soInit(socket), resp, "1.0");
             } catch (exc) { /* ignore */ }
         }
     } finally {
