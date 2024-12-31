@@ -217,7 +217,6 @@ function getMessage(buf: DynBuf): null | HTTPReq {
         if (buf.length >= maxHeaderLength) throw new HTTPError(413, 'header is too large');
         return null; //more data is needed
     }
-
     const msg: HTTPReq = parseHTTPReq(buf.data.subarray(0, index + 4)); 
     popBuf(buf, index + 1);
     return msg;
@@ -228,7 +227,7 @@ function parseHTTPReq(data: Buffer): HTTPReq {
     const [method, uri, version] = parseRequestLine(lines[0]);
     const headers: Buffer[] = [];
     
-    for (let i = 1; i < lines.length; i++) {
+    for (let i = 1; i < lines.length - 1; i++) {
         const h: Buffer = lines[i];
         if (!checkHeaderLine(h)) throw new HTTPError(400, 'bad field');
         headers.push(h);
@@ -239,28 +238,15 @@ function parseHTTPReq(data: Buffer): HTTPReq {
 }
 
 function splitLines(data: Buffer): Buffer[] {
-    let lines = Buffer[0];
-    let numOfLines = 0; 
+    let lines:Buffer[] = [];
     const delimiter = Buffer.from('\r\n');
     let start = 0
     let index = data.indexOf(delimiter, start);
     while (index !== -1) {
-        if (numOfLines + 1 > lines.length) {
-            let tmp = Buffer[lines.length * 2 + 1];
-            tmp = [...lines];
-            lines = tmp;
-        }
         lines.push(data.subarray(start, index));
         start = index + delimiter.length;
-        numOfLines++;
         index = data.indexOf(delimiter, start);
     }
-
-    let tmp = Buffer[numOfLines + 1];
-    tmp = [...(lines.subarray(0,numOfLines))];
-    lines = tmp;
-    
-    lines.push(data.subarray(start));
 
     return lines;
 }
@@ -422,7 +408,6 @@ async function serveClient(conn: TCPConn): Promise<void> {
 
             continue;
         }
-
         const reqBody: BodyReader = readFromReq(conn, buf, msg);
         const res: HTTPRes = await handleReq(msg, reqBody);
         await writeHTTPResp(conn, res, msg.version);
