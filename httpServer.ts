@@ -199,7 +199,7 @@ const maxHeaderLength = 1024 * 8;
  * getMessage retrives a message from a dynamic buffer, returning null if a buffer doesnt contain a message
  */
 
-function getMessage(buf: DynBuf): null | Buffer {
+function getMessage(buf: DynBuf): null | HTTPReq {
     //end of header is marked by '\r\n\r\n'
     if (buf.length === 0) return null;
     const index = buf.data.subarray(0, buf.length).indexOf('\r\n\r\n');
@@ -208,7 +208,7 @@ function getMessage(buf: DynBuf): null | Buffer {
         return null; //more data is needed
     }
 
-    const msg: Buffer = parseHTTPReq(buf.data.subarray(0, index + 4)); 
+    const msg: HTTPReq = parseHTTPReq(buf.data.subarray(0, index + 4)); 
     popBuf(buf, index + 1);
     return msg;
 }
@@ -282,6 +282,31 @@ function checkHeaderLine(data: Buffer): boolean {
     if (secondOWS === -1) return true;
     if (firstOWS + 1 === secondOWS) return false;
     return true;
+}
+
+function readFromReq(conn: TCPConn, buf: Buffer, req: HTTPReq): BodyReader {
+    let payloadLength = -1;
+    const contentLength = fieldGet(req.headers, 'Content-Length');
+    if (contentLength) {
+        payloadLength = parseDec(contentLength.toString('latin1'));
+        if (isNaN(payloadLength)) throw new HTTPError(400, 'bad Content-Length.');
+    }
+    const bodyAllowed: boolean = !(req.method === 'GET' || req.method === 'HEAD');
+    const chunked: Buffer = fieldGet(req.headers, 'Transfer-Encoding');
+    const isChunked: boolean = chunked.equals(Buffer.from('chunked')) || false;
+    
+    if (!bodyAllowed && (payloadLength > 0 || isChunked)) throw new HTTPError(400, 'HTTP body not allowed.');
+    
+    if (!bodyAllowed) payloadLength = 0;
+    
+    if (payloadLength >= 0) {
+        //"Content-Length" field is a header
+        return readerFromConnLength(conn, buf, payloadLength);
+    } else if (isChunked) {
+        //"Transfer-Encoding" field is a header
+    } else {
+        //read the rest of the connection
+    }
 }
 
 async function serveClient(conn: TCPConn): Promise<void> {
