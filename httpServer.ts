@@ -284,16 +284,16 @@ function checkHeaderLine(data: Buffer): boolean {
     return true;
 }
 
-function readFromReq(conn: TCPConn, buf: Buffer, req: HTTPReq): BodyReader {
+function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
     let payloadLength = -1;
-    const contentLength = fieldGet(req.headers, 'Content-Length');
+    const contentLength: null | Buffer = fieldGet(req.headers, 'Content-Length');
     if (contentLength) {
         payloadLength = parseDec(contentLength.toString('latin1'));
         if (isNaN(payloadLength)) throw new HTTPError(400, 'bad Content-Length.');
     }
     const bodyAllowed: boolean = !(req.method === 'GET' || req.method === 'HEAD');
-    const chunked: Buffer = fieldGet(req.headers, 'Transfer-Encoding');
-    const isChunked: boolean = chunked.equals(Buffer.from('chunked')) || false;
+    const chunked: null | Buffer = fieldGet(req.headers, 'Transfer-Encoding');
+    const isChunked: boolean = chunked?.equals(Buffer.from('chunked')) || false;
     
     if (!bodyAllowed && (payloadLength > 0 || isChunked)) throw new HTTPError(400, 'HTTP body not allowed.');
     
@@ -307,6 +307,66 @@ function readFromReq(conn: TCPConn, buf: Buffer, req: HTTPReq): BodyReader {
     } else {
         //read the rest of the connection
     }
+}
+
+function fieldGet(headers: Buffer[], field: string): null | Buffer {
+    headers.forEach((key: Buffer) => {
+        if (key.toString().toLocaleLowerCase() === field.toLocaleLowerCase()) return key;
+    });
+    return null
+}
+
+function readerFromConnLength(conn: TCPConn, buf: DynBuf, payloadLength: number): BodyReader {
+    return {
+        length: payloadLength,
+        read: async (): Promise<Buffer> => {
+            if (payloadLength === 0) return Buffer.from('');
+            if (buf.length === 0) {
+                const data = await soRead(conn);
+                pushBuf(buf, data);
+                if (data.length === 0) {
+                    //More data was expected
+                    throw new Error('Unexpected EOF from HTTP body');
+                }
+            }
+            
+            const consume = Math.min(buf.length, payloadLength);
+            payloadLength -= consume;
+            const data = Buffer.from(buf.data.subarray(0, consume));
+            popBuf(buf, consume);
+            return data;
+        },
+    };
+}
+
+async function handleReq(req: HTTPReq, body: BodyReader): Promise<HTTPRes> {
+    let resp: BodyReader;
+    switch (req.uri.toString('latin1')) {
+       case '/echo':
+            resp = body;
+            break;
+        default:
+            resp = defaultReader(Buffer.from('Hello World!\n'));
+            break;
+    }
+    
+    return {
+        code: 200,
+        headers: [Buffer.from('Server: http_test_server')],
+        body: resp,
+    };
+}
+
+function defaultReader(data: Buffer): BodyReader {
+    let done = false;
+    return {
+        length: data.length,
+        read: async (): Promise<Buffer> => {
+            if (done) return Buffer.from('');
+            done = true;
+            return data;
+        }
+    };
 }
 
 async function serveClient(conn: TCPConn): Promise<void> {
