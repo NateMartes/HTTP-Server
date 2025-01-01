@@ -198,7 +198,9 @@ function pushBuf(buf: DynBuf, data: Buffer): void {
  * popBuf removes the lastest message from a dynamic buffer
  */
 function popBuf(buf: DynBuf, len: number): void {
-    buf.data.copyWithin(0, len, buf.length);
+    const newBuffer = Buffer.alloc(buf.length - len);
+    buf.data.copy(newBuffer, 0, len, buf.length);
+    buf.data = newBuffer;
     buf.length -= len;
 }
 
@@ -217,8 +219,8 @@ function getMessage(buf: DynBuf): null | HTTPReq {
         if (buf.length >= maxHeaderLength) throw new HTTPError(413, 'header is too large');
         return null; //more data is needed
     }
-    const msg: HTTPReq = parseHTTPReq(buf.data.subarray(0, index + 4)); 
-    popBuf(buf, index + 1);
+    const msg: HTTPReq = parseHTTPReq(buf.data.subarray(0, index + 4));
+    popBuf(buf, index + 4);
     return msg;
 }
 
@@ -228,8 +230,11 @@ function parseHTTPReq(data: Buffer): HTTPReq {
     const headers: Buffer[] = [];
     
     for (let i = 1; i < lines.length - 1; i++) {
-        const h: Buffer = lines[i];
+        let h: Buffer = lines[i];
         if (!checkHeaderLine(h)) throw new HTTPError(400, 'bad field');
+    
+        //remove trailling whitespace if exists
+        h = Buffer.from(h.toString().trim());
         headers.push(h);
     }
     
@@ -264,6 +269,7 @@ function parseRequestLine(data: Buffer): [string, Buffer, string] {
     start = index + 1
 
     const version = data.subarray(start).toString();
+    if (!version.match("^HTTP\/[0-9]\.[0-9]$")) throw new HTTPError(400, 'bad request line.');
 
     return [method, uri, version];
 }
@@ -307,10 +313,13 @@ function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
 }
 
 function fieldGet(headers: Buffer[], field: string): null | Buffer {
+    let value = Buffer.alloc(0);
     headers.forEach((key: Buffer) => {
-        if (key.toString().toLocaleLowerCase() === field.toLocaleLowerCase()) return key;
+        if (key.toString().toLocaleLowerCase().indexOf(field.toLocaleLowerCase()) !== -1) {
+            value = key.subarray(key.indexOf(':') + (key.indexOf(' ') === -1 ? 1 : 2), key.length);
+        }
     });
-    return null
+    return value.length === 0 ? null : value;
 }
 
 function readerFromConnLength(conn: TCPConn, buf: DynBuf, payloadLength: number): BodyReader {
@@ -318,12 +327,13 @@ function readerFromConnLength(conn: TCPConn, buf: DynBuf, payloadLength: number)
         length: payloadLength,
         read: async (): Promise<Buffer> => {
             if (payloadLength === 0) return Buffer.from('');
+            console.log(buf.length);
             if (buf.length === 0) {
                 const data = await soRead(conn);
                 pushBuf(buf, data);
                 if (data.length === 0) {
                     //More data was expected
-                    throw new Error('Unexpected EOF from HTTP body');
+                    throw new Error('Unexpected EOF from HTTP body.');
                 }
             }
             
@@ -343,7 +353,7 @@ async function handleReq(req: HTTPReq, body: BodyReader): Promise<HTTPRes> {
             resp = body;
             break;
         default:
-            resp = readerFromMemory(Buffer.from('Hello World!\n'));
+            resp = readerFromMemory(Buffer.from("Hello World!\n"));
             break;
     }
     
@@ -380,13 +390,18 @@ async function writeHTTPResp(conn: TCPConn, resp: HTTPRes, version: string): Pro
     //write body
     while (true) {
         const data = await resp.body.read();
+        console.log(`dataToWrite[${data.toString()}] length: ${data.length}`);
         if (data.length === 0) break;
         await soWrite(conn, data);
     }
 }
 
 function encodeHTTPResp(resp: HTTPRes, version: string): Buffer {
-    return Buffer.from(`${version} ${resp.code} `);
+    let respString = (`${version} ${resp.code}\r\n`);
+    resp.headers.forEach((h) => respString += `${h}\r\n`);
+    respString += "\r\n\r\n";
+    return Buffer.from(respString);
+    
 }
 
 async function serveClient(conn: TCPConn): Promise<void> {
@@ -411,8 +426,8 @@ async function serveClient(conn: TCPConn): Promise<void> {
         const reqBody: BodyReader = readFromReq(conn, buf, msg);
         const res: HTTPRes = await handleReq(msg, reqBody);
         await writeHTTPResp(conn, res, msg.version);
-        
-        if (msg.version === "1.0") return;
+       
+        if (msg.version === "HTTP/1.0") return;
 
         while ((await reqBody.read()).length > 0){}
     }
