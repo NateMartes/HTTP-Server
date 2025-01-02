@@ -297,7 +297,9 @@ function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
     const chunked: null | Buffer = fieldGet(req.headers, 'Transfer-Encoding');
     const isChunked: boolean = chunked?.equals(Buffer.from('chunked')) || false;
     
-    if (!bodyAllowed && (payloadLength > 0 || isChunked)) throw new HTTPError(400, 'HTTP body not allowed.');
+    if (!bodyAllowed && (payloadLength > 0 || isChunked)) {
+        throw new HTTPError(400, 'HTTP body not allowed.');
+    }
     
     if (!bodyAllowed) payloadLength = 0;
     
@@ -399,7 +401,8 @@ async function writeHTTPResp(conn: TCPConn, resp: HTTPRes, version: string): Pro
 function encodeHTTPResp(resp: HTTPRes, version: string): Buffer {
     let respString = (`${version} ${resp.code}\r\n`);
     resp.headers.forEach((h) => respString += `${h}\r\n`);
-    respString += "\r\n\r\n";
+    respString += "\r\n";
+    console.log(JSON.stringify(respString));
     return Buffer.from(respString);
     
 }
