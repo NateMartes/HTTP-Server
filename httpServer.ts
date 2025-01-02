@@ -1,39 +1,56 @@
+/*
+ * Author: Nathaniel Martes
+ * Description:
+ *  Creates a TCP server reading HTTP requests, also know as an HTTP server.
+ *  Uri Descriptions:
+ *
+ *    - /     : writes "Hello World!\n" back to the client.
+ *    - /echo : writes the payload from the client back to the client.
+ *              if there is no payload, no payload is sent to the client.
+ */
+
 import net from "node:net";
 
-// headers and uri are Buffer as URI and header fields aren't guarantee to be ASCII or UTF-8 strings
+// HTTPReq encapsulates a HTTP request into object fields.
 type HTTPReq = {
     method: string,
-    uri: Buffer,
     version: string,
+    
+    // uri and headers are type Buffer because URIs and header fields aren't gauranteed to be 
+    // ASCII or UTF-8 strings.
+    uri: Buffer,
     headers: Buffer[]
 }
 
+// HTTPRes encapsulates a HTTP response into object fields.
 type HTTPRes = {
     code: number,
     headers: Buffer[],
     body: BodyReader
 }
 
+// Body Reader encapsulates a HTTP response payload.
 type BodyReader = {
-    // -1 if unknow
+    // -1 if unknow.
     length: number,
-    //payload is a promise as the response has not set maximum length
+    //payload is a promise as the response has not set maximum length.
     read: () => Promise<Buffer>
 }
 
-//connection promise wrapper so we dont have to use callbacks
+// TCPConn encapsulates net.Socket so we can use Promise & async/await instead of callbacks.
 type TCPConn = {
     socket: net.Socket;
     err: null | Error;
     ended: boolean;
 
-    //nth callbacks of the promise of the current read
+    //nth callbacks of the promise of the current read.
     reader: null | {
         resolve: (value: Buffer) => void,
         reject: (reason: Error) => void,
     };
 };
 
+// HTTPError is used for easy error throwing in the event of a bad request.
 class HTTPError extends Error {
     public code: number;
     
@@ -44,9 +61,7 @@ class HTTPError extends Error {
     }
 }
 
-/*
- * soInit setups a TCPConn for a connection socket, setting up callback events aswell
- */
+// soInit setups a TCPConn for a connection socket, setting up callback events aswell.
 function soInit(socket: net.Socket): TCPConn {
     const conn: TCPConn = {
         socket: socket, err: null, ended: false, reader: null,
@@ -83,9 +98,7 @@ function soInit(socket: net.Socket): TCPConn {
     return conn;
 }
 
-/*
- * soRead is a Promise wrapper for the data event
- */
+// soRead is a Promise wrapper for the data event.
 function soRead(conn: TCPConn): Promise<Buffer> { 
     console.assert(!conn.reader);
     return new Promise((resolve, reject) => {
@@ -103,9 +116,7 @@ function soRead(conn: TCPConn): Promise<Buffer> {
     });
 }
 
-/*
- * soWrite is a Promise wrapper for socket.write() 
- */
+// soWrite is a Promise wrapper for socket.write(). 
 function soWrite(conn: TCPConn, data: Buffer): Promise<void> {
     console.assert(data.length > 0);
     return new Promise((resolve, reject) => {
@@ -124,18 +135,14 @@ function soWrite(conn: TCPConn, data: Buffer): Promise<void> {
     });
 }
 
-/*
- * TCPListener is used to wrap socket.listen() and the connection event
- */
+// TCPListener is used to wrap socket.listen() and the connection event.
 type TCPListener = {
     socket: net.Server;
     host: String,
     port: String
 }
 
-/*
- * soListen is a Promise wrapper for the listening socket
- */
+// soListen is a Promise wrapper for the listening socket.
 function soListen(socket: net.Server, hostAddress: String, portAddress: String): TCPListener {
     const listener: TCPListener = {
         socket: socket,
@@ -157,9 +164,7 @@ function soListen(socket: net.Server, hostAddress: String, portAddress: String):
     return listener;
 }
 
-/*
- * soAccept is a wrapper for the connection event
- */
+// soAccept is a wrapper for the connection event.
 function soAccept(listener: TCPListener): Promise<net.Socket> {
     return new Promise((resolve, reject) => {
         listener.socket.on("connection", (socket: net.Socket) => resolve(socket));
@@ -167,17 +172,14 @@ function soAccept(listener: TCPListener): Promise<net.Socket> {
     });
 }
 
-/*
- * DynBuf is a dynamic buffer to store incoming data
- */
+// DynBuf is a dynamic buffer to store incoming data so we can build
+// a protocal to decide what a request is.
 type DynBuf = {
     data: Buffer;
     length: number;
 }
 
-/*
- * pushBuf pushes a new buffer onto an exisiting dynamic buffer
- */
+// pushBuf pushes a new buffer onto an exisiting dynamic buffer.
 function pushBuf(buf: DynBuf, data: Buffer): void {
     const newLen = buf.length + data.length;
     if (newLen > buf.data.length) {
@@ -194,9 +196,7 @@ function pushBuf(buf: DynBuf, data: Buffer): void {
     buf.length = newLen;
 }
 
-/*
- * popBuf removes the lastest message from a dynamic buffer
- */
+// popBuf removes the lastest message from a dynamic buffer.
 function popBuf(buf: DynBuf, len: number): void {
     const newBuffer = Buffer.alloc(buf.length - len);
     buf.data.copy(newBuffer, 0, len, buf.length);
@@ -204,13 +204,10 @@ function popBuf(buf: DynBuf, len: number): void {
     buf.length -= len;
 }
 
-//max length of a HTTP header (8GB)
+// max length of a HTTP header (8GB).
 const maxHeaderLength = 1024 * 8;
 
-/*
- * getMessage retrives a message from a dynamic buffer, returning null if a buffer doesnt contain a message
- */
-
+// getMessage retrives a message from a dynamic buffer, returning null if a buffer doesnt contain a message.
 function getMessage(buf: DynBuf): null | HTTPReq {
     //end of header is marked by '\r\n\r\n'
     if (buf.length === 0) return null;
@@ -224,6 +221,7 @@ function getMessage(buf: DynBuf): null | HTTPReq {
     return msg;
 }
 
+// parseHTTPReq takes a buffer contaning a HTTP request and removes the HTTP header.
 function parseHTTPReq(data: Buffer): HTTPReq {
     const lines = splitLines(data);
     const [method, uri, version] = parseRequestLine(lines[0]);
@@ -242,8 +240,9 @@ function parseHTTPReq(data: Buffer): HTTPReq {
     return { method: method, uri: uri, version: version, headers: headers, };
 }
 
+// splitLines takes Buffer an splits it into an aray of Buffers using \r\n as the delimiter.
 function splitLines(data: Buffer): Buffer[] {
-    let lines:Buffer[] = [];
+    let lines: Buffer[] = [];
     const delimiter = Buffer.from('\r\n');
     let start = 0
     let index = data.indexOf(delimiter, start);
@@ -256,6 +255,7 @@ function splitLines(data: Buffer): Buffer[] {
     return lines;
 }
 
+// parseRequestLine takes a buffer and extracts the HTTP request line's parts.
 function parseRequestLine(data: Buffer): [string, Buffer, string] {
     const delimiter = Buffer.from(' ');
     let start = 0;
@@ -274,6 +274,7 @@ function parseRequestLine(data: Buffer): [string, Buffer, string] {
     return [method, uri, version];
 }
 
+// checkHeaderLine ensures a HTTP header line follows the RFC.
 function checkHeaderLine(data: Buffer): boolean {
     const colon = data.indexOf(':');
     if (colon === -1) return false;
@@ -286,6 +287,7 @@ function checkHeaderLine(data: Buffer): boolean {
     return true;
 }
 
+// readFromReq reads the payload from a HTTP request.
 function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
     let payloadLength = -1;
     const contentLength: null | Buffer = fieldGet(req.headers, 'Content-Length');
@@ -314,6 +316,7 @@ function readFromReq(conn: TCPConn, buf: DynBuf, req: HTTPReq): BodyReader {
     return {length: 0, read: async (): Promise<Buffer> => {return Buffer.from('')}};
 }
 
+// fieldGet gets a field from a HTTP header (case-insensistive).
 function fieldGet(headers: Buffer[], field: string): null | Buffer {
     let value = Buffer.alloc(0);
     headers.forEach((key: Buffer) => {
@@ -324,6 +327,7 @@ function fieldGet(headers: Buffer[], field: string): null | Buffer {
     return value.length === 0 ? null : value;
 }
 
+// readerFromConnLength reads the payload from a HTTP request an reads it using Content-Length.
 function readerFromConnLength(conn: TCPConn, buf: DynBuf, payloadLength: number): BodyReader {
     return {
         length: payloadLength,
@@ -348,13 +352,16 @@ function readerFromConnLength(conn: TCPConn, buf: DynBuf, payloadLength: number)
     };
 }
 
+// handleReq takes a HTTP request an determines what to respond with
 async function handleReq(req: HTTPReq, body: BodyReader): Promise<HTTPRes> {
     let resp: BodyReader;
     switch (req.uri.toString('latin1')) {
        case '/echo':
+            // returns the payload from the client
             resp = body;
             break;
         default:
+            // default payload
             resp = readerFromMemory(Buffer.from("Hello World!\n"));
             break;
     }
@@ -366,6 +373,7 @@ async function handleReq(req: HTTPReq, body: BodyReader): Promise<HTTPRes> {
     };
 }
 
+// readerFromMemory creates a default BodyReader, with the payload being the passed in Buffer.
 function readerFromMemory(data: Buffer): BodyReader {
     let done = false;
     return {
@@ -378,6 +386,7 @@ function readerFromMemory(data: Buffer): BodyReader {
     };
 }
 
+// writeHTTPResp writes a HTTP response containing the correct payload.
 async function writeHTTPResp(conn: TCPConn, resp: HTTPRes, version: string): Promise<void> {
     if (resp.body.length < 0) {
         //chunked encoding    
@@ -398,6 +407,7 @@ async function writeHTTPResp(conn: TCPConn, resp: HTTPRes, version: string): Pro
     }
 }
 
+// encodeHTTPResp prepares the response's header before sending it to the client
 function encodeHTTPResp(resp: HTTPRes, version: string): Buffer {
     let respString = (`${version} ${resp.code}\r\n`);
     resp.headers.forEach((h) => respString += `${h}\r\n`);
@@ -407,6 +417,7 @@ function encodeHTTPResp(resp: HTTPRes, version: string): Buffer {
     
 }
 
+// serveClient takes a TCP connection socket and serves it based on the HTTP request provided
 async function serveClient(conn: TCPConn): Promise<void> {
     const buf: DynBuf = {data: Buffer.alloc(0), length: 0};
     while (true) {
@@ -436,9 +447,7 @@ async function serveClient(conn: TCPConn): Promise<void> {
     }
 }
 
-/*
- * newConn informs the server a new connection has been made, and serves the connection
- */
+// newConn informs the server a new connection has been made, and serves the connection.
 async function newConn(socket: net.Socket): Promise<void> {
     console.log(`new connection ${socket.remoteAddress}, ${socket.remotePort}`);
     try {
@@ -460,9 +469,7 @@ async function newConn(socket: net.Socket): Promise<void> {
     }
 }
 
-/*
- * listenForClient waits for a connection if not already connected
- */
+// listenForClient waits for a connection if not already connected.
 async function listenForClient(socket: net.Server): Promise<void> {
     while (true) {
         try {
