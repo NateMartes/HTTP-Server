@@ -482,7 +482,7 @@ async function newConn(socket: net.Socket): Promise<void> {
 async function listenForClient(socket: net.Server): Promise<void> {
     while (true) {
         try {
-            const listener: TCPListener = soListen(socket, "127.0.0.1", "1234");
+            const listener: TCPListener = soListen(socket, "0.0.0.0", "1234");
             const connSocket: net.Socket = await soAccept(listener);
             await newConn(connSocket);
         } catch (exc) {
