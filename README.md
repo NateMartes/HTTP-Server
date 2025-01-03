@@ -34,7 +34,7 @@ which returns `Hello World!`.
 
 Also the URI `/echo` returns the payload the client sends to the server
 
-```curl --data-binary 'I'm Sending Data' http://0.0.0.0:1234/echo```
+```curl --data-binary @/some/data/file http://0.0.0.0:1234/echo```
 
 ## Resources Used
 [Build Your Own Web Server](https://build-your-own.org/webserver/): A “Build Your Own X” book that dives deep into the understanding of network programming, TCP, and HTTP.
